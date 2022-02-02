@@ -1,0 +1,165 @@
+---
+
+
+- hosts: localhost
+#from https://stackoverflow.com/questions/45840664/installing-nodejs-lts-for-ansible?rq=1
+  gather_facts: yes
+  become: yes
+
+  vars:
+    #vars from DevOps tasks https://www.azuredevopslabs.com/labs/vstsextend/ansible/
+    resource_group: linuxnode-RG
+    location: West Europe
+    mysqlserver_name: zvsql
+    mysqldb_name: zvsqldb
+    admin_username: zvsqlAdmin
+    admin_password: P@ssw0rd1
+    #vars from https://stackoverflow.com/questions/45840664/installing-nodejs-lts-for-ansible?rq=1
+    NODEJS_VERSION: "17"
+    ansible_distribution_release: "bionic" #trusty
+
+  tasks:
+  - name: check that I have log file for all hosts on my local machine
+    stat: path=/var/og/hosts/{{inventory_hostname}}.log
+    delegate_to: localhost    
+   
+    #- name: Create a resource group
+    #  azure_rm_resourcegroup:
+    #    name: "{{ resource_group }}"
+    #    location: "{{ location }}"
+  #Install .net from https://dev.to/mkokabi/deploying-dotnetcore-on-ubuntu-using-ansible-14f7
+  - name: Download MS product repository
+    get_url:
+      url: https://packages.microsoft.com/config/ubuntu/18.04/packages-microsoft-prod.deb
+      dest: /tmp/packages-microsoft-prod.deb
+  - name: Install MS product repository
+    apt: deb=/tmp/packages-microsoft-prod.deb
+    become: true
+  - name: Make sure HTTPS is supported by apt
+    apt:
+      name: apt-transport-https
+      state: present
+      update_cache: no
+    become: true
+  - name: Install .NET Core SDK
+    apt:
+      name: dotnet-sdk-2.2
+      state: present
+      update_cache: yes
+    become: true
+#Install jdk11 from https://www.cidevops.com/2020/04/ansible-playbook-for-java-11.html
+  - name: Update APT package manager repositories cache
+    become: true
+    apt:
+      update_cache: yes
+  - name: Install Java using Ansible
+    apt:
+      name: "{{ packages }}"
+      state: present
+    vars:
+      packages:
+         - openjdk-11-jdk
+#install Node.js from https://stackoverflow.com/questions/45840664/installing-nodejs-lts-for-ansible?rq=1
+  - name: Install the gpg key for nodejs LTS
+    apt_key:
+      url: "https://deb.nodesource.com/gpgkey/nodesource.gpg.key"
+      state: present
+
+  - name: Install the nodejs LTS repos
+    apt_repository:
+      repo: "deb https://deb.nodesource.com/node_{{ NODEJS_VERSION }}.x {{ ansible_distribution_release }} main"
+      state: present
+      update_cache: yes
+
+  - name: Install the nodejs
+    apt:
+      name: nodejs
+      state: present
+#Create SQL Server with default database
+#  - name: Download MS product repository
+#    get_url:
+#      url: https://packages.microsoft.com/config/ubuntu/18.04/mssql-server-2019.list)
+#      dest: /tmp/mssql-server-2019.list
+#    become: true
+#  - name: Install MS product repository
+#    apt: deb=/tmp/mssql-server-2019.list
+#    become: true
+#  - name: Make sure HTTPS is supported by apt
+#    apt:
+#      name: apt-transport-https
+#      state: present
+#      update_cache: no
+#    become: true
+
+  - name: "updating server"
+    apt:
+      update_cache: yes
+  - name: "Installing apt dependencies"
+    apt:
+     name: "{{item}}"
+    with_items:
+      - python-pip
+      - python-dev 
+      - libmysqlclient-dev
+
+  - name: "Installing pip dependencies"
+    pip:
+      name: MySQL-python
+      extra_args: --index=https://pypi.python.org/pypi/
+      version: 1.2.5
+
+  - name: Install the gpg key for SQL
+    apt_key:
+      url: "https://packages.microsoft.com/keys/microsoft.asc"
+      state: present
+
+  - name: Install the SQL repos
+    apt_repository:
+      repo: "deb https://packages.microsoft.com/ubuntu/18.04/mssql-server-2019 bionic main"
+      state: present
+      update_cache: yes
+
+  - name: install mysql     
+    apt: 
+      name: mysql-server 
+      update_cache: yes
+      cache_valid_time: 3600
+      state: present
+  - name: start up the mysql service  
+    shell: "service mysql start"  
+  - name: ensure mysql is enabled to run on startup  
+    service: 
+      name: mysql
+      state: started
+      enabled: true
+  - name: update mysql root password for all root accounts  
+    mysql_user:  
+      name: root  
+      host: "{{ item }}"  
+      password: "{{ admin_password }}"  
+      login_user: root  
+      login_password: "{{ admin_password }}"  
+      check_implicit_admin: yes  
+      priv: "*.*:ALL,GRANT"  
+    with_items:  
+    - "{{ ansible_hostname }}"  
+    - 127.0.0.1  
+    - ::1  
+    - localhost
+  - name: create a new database  
+    mysql_db: 
+      name: testdb
+      state: present 
+      login_user: root
+      login_password: "{{ admin_password }}"  
+  - name: add sample data to database
+    become: true    
+    copy: src=dump.sql dest=/tmp/dump.sql  
+  - name: insert sample data into database
+    become: true    
+    mysql_db: 
+      name: testdb
+      state: import 
+      target: /tmp/dump.sql 
+      login_user: root
+      login_password: "{{ admin_password }}"
